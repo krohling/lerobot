@@ -21,14 +21,8 @@ from typing import Any
 
 from lerobot.common.cameras.utils import make_cameras_from_configs
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
 
 from ..robot import Robot
-from ..utils import ensure_safe_goal_position
 from .config_bimanual_so100_follower import BimanualSO100FollowerConfig
 
 from ..so100_follower import SO100Follower
