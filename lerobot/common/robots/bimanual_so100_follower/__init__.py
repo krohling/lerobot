@@ -1,0 +1,2 @@
+from .config_bimanual_so100_follower import BimanualSO100FollowerConfig
+from .bimanual_so100_follower import BimanualSO100Follower
