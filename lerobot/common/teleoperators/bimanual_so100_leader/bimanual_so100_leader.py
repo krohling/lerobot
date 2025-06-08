@@ -15,14 +15,8 @@
 # limitations under the License.
 
 import logging
-import time
 
 from lerobot.common.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.common.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.common.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
 
 from ..teleoperator import Teleoperator
 from .config_bimanual_so100_leader import BimanualSO100LeaderConfig
@@ -88,11 +82,6 @@ class BimanualSO100Leader(Teleoperator):
         logger.info(f"{self} configured.")
 
     def setup_motors(self) -> None:
-        # for motor in reversed(self.bus.motors):
-        #     input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-        #     self.bus.setup_motor(motor)
-        #     print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
-
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
         logger.info(f"{self} motors setup complete.")

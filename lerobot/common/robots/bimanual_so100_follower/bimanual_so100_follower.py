@@ -53,7 +53,6 @@ class BimanualSO100Follower(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        # return {f"{motor}.pos": float for motor in self.bus.motors}
         left_motors_ft = self.left_arm._motors_ft
         right_motors_ft = self.right_arm._motors_ft
         combined_motors_ft = {}
@@ -79,7 +78,6 @@ class BimanualSO100Follower(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
         return self.left_arm.is_connected and self.right_arm.is_connected and all(
             cam.is_connected for cam in self.cameras.values()
         )
@@ -97,7 +95,6 @@ class BimanualSO100Follower(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        # return self.bus.is_calibrated
         return self.left_arm.is_calibrated and self.right_arm.is_calibrated
 
     def calibrate(self) -> None:
@@ -109,35 +106,11 @@ class BimanualSO100Follower(Robot):
         logger.info(f"{self} configured.")
 
     def setup_motors(self) -> None:
-        # for motor in reversed(self.bus.motors):
-        #     input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-        #     self.bus.setup_motor(motor)
-        #     print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
-
         self.left_arm.setup_motors()
         self.right_arm.setup_motors()
         logger.info(f"{self} motors setup complete.")
 
     def get_observation(self) -> dict[str, Any]:
-        # if not self.is_connected:
-        #     raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        # # Read arm position
-        # start = time.perf_counter()
-        # obs_dict = self.bus.sync_read("Present_Position")
-        # obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
-        # dt_ms = (time.perf_counter() - start) * 1e3
-        # logger.debug(f"{self} read state: {dt_ms:.1f}ms")
-
-        # # Capture images from cameras
-        # for cam_key, cam in self.cameras.items():
-        #     start = time.perf_counter()
-        #     obs_dict[cam_key] = cam.async_read()
-        #     dt_ms = (time.perf_counter() - start) * 1e3
-        #     logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
-
-        # return obs_dict
-
         left_obs = self.left_arm.get_observation()
         right_obs = self.right_arm.get_observation()
         combined_obs = {}
@@ -156,42 +129,15 @@ class BimanualSO100Follower(Robot):
         return combined_obs
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Command arm to move to a target joint configuration.
-
-        The relative action magnitude may be clipped depending on the configuration parameter
-        `max_relative_target`. In this case, the action sent differs from original action.
-        Thus, this function always returns the action actually sent.
-
-        Raises:
-            RobotDeviceNotConnectedError: if robot is not connected.
-
-        Returns:
-            the action sent to the motors, potentially clipped.
-        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        # goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
-
-        # # Cap goal position when too far away from present position.
-        # # /!\ Slower fps expected due to reading from the follower.
-        # if self.config.max_relative_target is not None:
-        #     present_pos = self.bus.sync_read("Present_Position")
-        #     goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
-        #     goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
-
-        # # Send goal position to the arm
-        # self.bus.sync_write("Goal_Position", goal_pos)
-        # return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
         left_action = {key.removeprefix("left_"): val for key, val in action.items() if key.startswith("left_")}
         right_action = {key.removeprefix("right_"): val for key, val in action.items() if key.startswith("right_")}
 
-        # Cap goal position when too far away from present position.
         left_pos = self.left_arm.send_action(left_action)
         right_pos = self.right_arm.send_action(right_action)
 
-        # combine the actions back into a single dict
         combined_action = {}
         for key in left_pos:
             combined_action[f"left_{key}"] = left_pos[key]

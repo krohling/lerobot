@@ -112,8 +112,6 @@ def teleop_loop(
 
 @draccus.wrap()
 def teleoperate(cfg: TeleoperateConfig):
-    print("Starting teleoperation...")
-    print(cfg)
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
