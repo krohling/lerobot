@@ -387,6 +387,9 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """Tokenize the text input"""
         device = batch[OBS_STATE].device
         tasks = batch["task"]
+        if isinstance(tasks, str):
+            # If a single task is provided, repeat it for each batch element
+            tasks = [tasks]
         if len(tasks) == 1:
             tasks = [tasks[0] for _ in range(batch[OBS_STATE].shape[0])]
 
