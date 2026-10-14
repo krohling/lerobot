@@ -4,13 +4,42 @@ import math
 import torch
 import torch.nn as nn
 
+from lerobot.utils.device_utils import get_safe_dtype
+
+
+def move_freqs(freqs: torch.Tensor, device: torch.device | str) -> torch.Tensor:
+    """Move a complex RoPE table to `device`, downcasting complex128 -> complex64 where the device
+    has no float64 (MPS). Mirrors `get_safe_dtype` for the complex case."""
+    device = torch.device(device)
+    if freqs.dtype is torch.complex128 and get_safe_dtype(torch.float64, device) is torch.float32:
+        freqs = freqs.cpu().to(torch.complex64)
+    return freqs.to(device)
+
+
+def fp32_call(module: nn.Module, *args: torch.Tensor) -> torch.Tensor:
+    """Run `module` in float32 regardless of its parameter dtype.
+
+    Wan keeps its time embedding and output head in float32 for numerical stability and relies on a
+    `torch.amp.autocast("cuda", dtype=torch.float32)` region to do so when the model runs in bf16.
+    That region is a no-op on every other device, so a float32 input would meet bf16 weights, which
+    MPS rejects (Metal aborts the process on a mixed-dtype matmul). On CUDA the autocast region is
+    kept as is; elsewhere the module is called with float32 views of its parameters.
+    """
+    first_param = next(module.parameters(), None)
+    device = first_param.device if first_param is not None else args[0].device
+    if device.type == "cuda":
+        with torch.amp.autocast("cuda", dtype=torch.float32):
+            return module(*args)
+    params = {name: tensor.float() for name, tensor in module.state_dict().items()}
+    return torch.func.functional_call(module, params, tuple(a.float() for a in args))
+
 
 def sinusoidal_embedding_1d(dim, position):
     # preprocess
     if dim % 2 != 0:
         raise ValueError(f"dim must be even, got {dim}.")
     half = dim // 2
-    position = position.type(torch.float64)
+    position = position.type(get_safe_dtype(torch.float64, position.device))
 
     # calculation
     sinusoid = torch.outer(position, torch.pow(10000, -torch.arange(half).to(position).div(half)))
@@ -32,6 +61,8 @@ def rope_params(max_seq_len, dim, theta=10000):
 @torch.amp.autocast("cuda", enabled=False)
 def rope_apply(x, grid_sizes, freqs):
     n, c = x.size(2), x.size(3) // 2
+    real_dtype = get_safe_dtype(torch.float64, x.device)
+    freqs = move_freqs(freqs, x.device)
 
     # split freqs
     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
@@ -42,7 +73,7 @@ def rope_apply(x, grid_sizes, freqs):
         seq_len = f * h * w
 
         # precompute multipliers
-        x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(seq_len, n, -1, 2))
+        x_i = torch.view_as_complex(x[i, :seq_len].to(real_dtype).reshape(seq_len, n, -1, 2))
         freqs_i = torch.cat(
             [
                 freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
@@ -165,10 +196,15 @@ class Head(nn.Module):
             x(Tensor): Shape [B, L1, C]
             e(Tensor): Shape [B, L1, C]
         """
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
-            x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
-        return x
+        if x.device.type == "cuda":
+            with torch.amp.autocast("cuda", dtype=torch.float32):
+                e = (self.modulation.unsqueeze(0) + e.unsqueeze(2)).chunk(2, dim=2)
+                x = self.head(self.norm(x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2))
+            return x
+        # Same computation in float32 on devices without CUDA autocast (see `fp32_call`).
+        e = (self.modulation.float().unsqueeze(0) + e.float().unsqueeze(2)).chunk(2, dim=2)
+        hidden = fp32_call(self.norm, x) * (1 + e[1].squeeze(2)) + e[0].squeeze(2)
+        return fp32_call(self.head, hidden)
 
 
 class WanModel(nn.Module):
