@@ -225,6 +225,12 @@ class FastWAMConfig(PreTrainedConfig):
     use_gradient_checkpointing: bool = False
     freeze_video_expert: bool = False
     toggle_action_dimensions: list[int] = field(default_factory=list)
+    # How multiple cameras are composed into the single `image_size` frame the Wan backbone sees.
+    # None: every camera resized to (H, W / n_cams) and concatenated along width (LIBERO 2-cam).
+    # "robotwin_tshape": upstream FastWAM's RoboTwin layout (experiments/robotwin/fastwam_policy/
+    # deploy_policy.py): head camera at (H*2/3, W) on top, left and right wrist cameras at
+    # (H/3, W/2) side by side underneath. The RoboTwin checkpoints were trained with this layout.
+    camera_layout: str | None = None
     video_scheduler: dict[str, float | int] = field(
         default_factory=lambda: {"train_shift": 5.0, "infer_shift": 5.0, "num_train_timesteps": 1000}
     )
@@ -391,16 +397,22 @@ class FastWAMConfig(PreTrainedConfig):
                 raise ValueError(
                     f"FastWAM state feature shape must be ({self.proprio_dim},), got {state_shape}."
                 )
+        if self.camera_layout not in (None, "robotwin_tshape"):
+            raise ValueError(
+                f"Unsupported camera_layout={self.camera_layout!r}; expected None or 'robotwin_tshape'."
+            )
         height, width = self.image_size
         image_width_sum = 0
         for name, feature in self.image_features.items():
             shape = tuple(feature.shape)
             if len(shape) != 3 or shape[0] != 3:
                 raise ValueError(f"FastWAM image feature `{name}` must have shape (3, H, W), got {shape}.")
+            if self.camera_layout is not None:
+                continue  # the layout resizes each camera itself; raw camera geometry is free
             if shape[1] != height:
                 raise ValueError(f"FastWAM image feature `{name}` height must be {height}, got {shape[1]}.")
             image_width_sum += shape[2]
-        if image_width_sum != width:
+        if self.camera_layout is None and image_width_sum != width:
             raise ValueError(f"FastWAM image feature widths must sum to {width}, got {image_width_sum}.")
 
     @property

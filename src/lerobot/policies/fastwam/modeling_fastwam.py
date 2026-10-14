@@ -398,16 +398,54 @@ def _resize_frames(frames: Tensor, size: tuple[int, int]) -> Tensor:
     return flat.reshape(*lead, *flat.shape[-3:])
 
 
+# Camera roles for the RoboTwin T-shape layout, by the key names used in `lerobot/robotwin_unified`
+# (dataset) and `RoboTwinEnvConfig` (simulator).
+_ROBOTWIN_CAMERA_ALIASES: dict[str, tuple[str, ...]] = {
+    "head": ("observation.images.cam_high", "observation.images.head_camera"),
+    "left": ("observation.images.cam_left_wrist", "observation.images.left_camera"),
+    "right": ("observation.images.cam_right_wrist", "observation.images.right_camera"),
+}
+
+
+def _compose_robotwin_tshape(
+    batch: dict[str, Tensor], image_keys: list[str], image_size: tuple[int, int]
+) -> Tensor:
+    """Upstream FastWAM's RoboTwin frame: head camera on top at (2H/3, W), left and right wrist
+    cameras underneath at (H/3, W/2) each, side by side. For image_size (384, 320) that is the
+    256x320 head over two 128x160 wrists from `deploy_policy.py`. A single pre-composed
+    `observation.images.image` key passes straight through."""
+    height, width = int(image_size[0]), int(image_size[1])
+    if image_keys == ["observation.images.image"]:
+        return _resize_frames(batch["observation.images.image"], (height, width))
+    cams: dict[str, Tensor] = {}
+    for role, aliases in _ROBOTWIN_CAMERA_ALIASES.items():
+        found = [k for k in aliases if k in batch]
+        if not found:
+            raise KeyError(
+                f"robotwin_tshape layout needs a {role} camera under one of {aliases}; got {image_keys}."
+            )
+        cams[role] = batch[found[0]]
+    if height % 3 or width % 2:
+        raise ValueError(f"robotwin_tshape needs image_size divisible by (3, 2), got {image_size}.")
+    top = _resize_frames(cams["head"], (2 * height // 3, width))
+    wrist = (height // 3, width // 2)
+    bottom = torch.cat([_resize_frames(cams["left"], wrist), _resize_frames(cams["right"], wrist)], dim=-1)
+    return torch.cat([top, bottom], dim=-2)
+
+
 def _stack_video_from_images(batch: dict[str, Tensor], config: FastWAMConfig) -> Tensor:
     # Exclude the `*_is_pad` companion tensors that delta-timestamp loading adds alongside
     # each camera (shape [B, T]); they share the `observation.images.` prefix but are not frames.
     image_keys = sorted(k for k in batch if k.startswith("observation.images.") and not k.endswith("_is_pad"))
     if not image_keys:
         raise KeyError("FastWAM batch must contain `video` or `observation.images.*` keys.")
-    per_cam = (int(config.image_size[0]), int(config.image_size[1]) // len(image_keys))
-    images = [_resize_frames(batch[key], per_cam) for key in image_keys]
-    # Cameras concatenate along width (last dim) in both the single-frame and temporal case.
-    image = torch.cat(images, dim=-1) if len(images) > 1 else images[0]
+    if config.camera_layout == "robotwin_tshape":
+        image = _compose_robotwin_tshape(batch, image_keys, config.image_size)
+    else:
+        per_cam = (int(config.image_size[0]), int(config.image_size[1]) // len(image_keys))
+        images = [_resize_frames(batch[key], per_cam) for key in image_keys]
+        # Cameras concatenate along width (last dim) in both the single-frame and temporal case.
+        image = torch.cat(images, dim=-1) if len(images) > 1 else images[0]
     if image.ndim == 4:
         # [B, C, H, W]: a single frame (e.g. the live eval observation) -> repeat across time.
         image = image.unsqueeze(2).repeat(1, 1, config.model_video_frames, 1, 1)
