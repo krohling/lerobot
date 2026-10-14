@@ -33,7 +33,7 @@ from .components import (
     load_wan_video_dit,
     resolve_wan_dit_paths,
 )
-from .model import sinusoidal_embedding_1d
+from .model import move_freqs, sinusoidal_embedding_1d
 from .video_dit import (
     FastWAMAttentionBlock,
     WanContinuousFlowMatchScheduler,
@@ -187,7 +187,7 @@ class ActionDiT(nn.Module):
         tokens = self.action_encoder(action_tokens)
         context_emb = self.text_embedding(context)
         context_attn_mask = context_mask.unsqueeze(1).expand(-1, seq_len, -1)
-        freqs = self.freqs[:seq_len].view(seq_len, 1, -1).to(tokens.device)
+        freqs = move_freqs(self.freqs[:seq_len].view(seq_len, 1, -1), tokens.device)
 
         return {
             "tokens": tokens,

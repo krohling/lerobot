@@ -26,6 +26,8 @@ from .model import (
     WanLayerNorm,
     WanModel,
     WanRMSNorm,
+    fp32_call,
+    move_freqs,
     rope_apply,
     rope_params,
     sinusoidal_embedding_1d,
@@ -665,10 +667,9 @@ class WanVideoDiT(WanModel):
         # Upstream guarantees this via an fp32 autocast region, so it holds even when the
         # model runs in bf16. Mirror that here, then cast the per-block modulation back to
         # model_dtype so the bf16 attention blocks are not upcast to fp32.
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            token_t_emb = sinusoidal_embedding_1d(self.freq_dim, token_timesteps.reshape(-1)).float()
-            t = self.time_embedding(token_t_emb).reshape(batch_size, -1, self.hidden_dim)
-            t_mod = self.time_projection(t).unflatten(2, (6, self.hidden_dim))
+        token_t_emb = sinusoidal_embedding_1d(self.freq_dim, token_timesteps.reshape(-1)).float()
+        t = fp32_call(self.time_embedding, token_t_emb).reshape(batch_size, -1, self.hidden_dim)
+        t_mod = fp32_call(self.time_projection, t).unflatten(2, (6, self.hidden_dim))
         t_mod = t_mod.to(dtype=model_dtype)
 
         x = self.patchify(x)
@@ -723,7 +724,7 @@ class WanVideoDiT(WanModel):
 
         x_tokens = rearrange(x, "b c f h w -> b (f h w) c").contiguous()
         grid_sizes = torch.tensor([[f, h, w]] * batch_size, dtype=torch.long, device=x_tokens.device)
-        freqs = {"grid_sizes": grid_sizes, "freqs": self.freqs.to(x_tokens.device)}
+        freqs = {"grid_sizes": grid_sizes, "freqs": move_freqs(self.freqs, x_tokens.device)}
 
         return {
             "tokens": x_tokens,
