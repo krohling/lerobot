@@ -146,6 +146,17 @@ evaluation pipeline:
 --policy.toggle_action_dimensions='[-1]'
 ```
 
+## Camera layout
+
+FastWAM sees one frame of `image_size`. By default every camera is resized to `(H, W / n_cameras)` and
+the cameras are concatenated along width, which is how the LIBERO 2-camera checkpoints were trained.
+The RoboTwin checkpoints were trained with upstream FastWAM's RoboTwin composition instead: the head
+camera at `(2H/3, W)` on top and the two wrist cameras at `(H/3, W/2)` side by side underneath
+(`experiments/robotwin/fastwam_policy/deploy_policy.py` upstream; 256x320 over two 128x160 for
+`image_size=(384, 320)`). Select it with `--policy.camera_layout=robotwin_tshape`; it accepts the
+`lerobot/robotwin_unified` camera keys (`cam_high`, `cam_left_wrist`, `cam_right_wrist`) and the
+simulator's (`head_camera`, `left_camera`, `right_camera`).
+
 ## Results
 
 Evaluated on LIBERO with [`ZibinDong/fastwam_libero_uncond_2cam224`](https://huggingface.co/ZibinDong/fastwam_libero_uncond_2cam224):
